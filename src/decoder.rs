@@ -62,6 +62,8 @@ pub struct VideoFrame {
     pub image: egui::ColorImage,
     /// Image décodée par le GPU.
     pub hardware: bool,
+    /// Première image produite après l'ouverture ou un déplacement.
+    pub first: bool,
 }
 
 enum Command {
@@ -229,6 +231,7 @@ impl Decoder {
                 frame_duration: if fps > 0.0 { 1.0 / fps } else { 1.0 / 25.0 },
                 next_pts: 0.0,
                 done: false,
+                first_pending: true,
             },
             audio: audio_track,
             playback: playback.clone(),
@@ -270,6 +273,8 @@ struct VideoTrack {
     next_pts: f64,
     /// Toutes les images de la génération courante ont été produites.
     done: bool,
+    /// La prochaine image produite est la première de la génération.
+    first_pending: bool,
 }
 
 struct AudioTrack {
@@ -295,6 +300,7 @@ struct Job {
     generation: u64,
     pts: f64,
     frame: frame::Video,
+    first: bool,
 }
 
 /// Rééchantillonneur vers le format de la carte son.
@@ -360,6 +366,7 @@ impl Worker {
                 }
                 self.video.decoder.flush();
                 self.video.done = false;
+                self.video.first_pending = true;
                 if let Some(audio) = &mut self.audio {
                     audio.decoder.flush();
                 }
@@ -444,7 +451,8 @@ impl Worker {
                 }
             }
 
-            if self.jobs.send(Job { generation, pts, frame: decoded }).is_err() {
+            let first = std::mem::take(&mut self.video.first_pending);
+            if self.jobs.send(Job { generation, pts, frame: decoded, first }).is_err() {
                 return Flow::Quit;
             }
         }
@@ -518,8 +526,12 @@ fn convert_worker(
                 pts: job.pts,
                 image,
                 hardware,
+                first: job.first,
             }),
             Err(e) => {
+                if job.first {
+                    playback.first_frame_lost(job.generation);
+                }
                 let _ = errors.send(format!("conversion d'image : {e}"));
             }
         }

@@ -39,6 +39,10 @@ struct State {
     frames: VecDeque<VideoFrame>,
     /// Position de la dernière image affichée.
     last_shown: f64,
+    /// La première image depuis le dernier déplacement est arrivée (ou sa
+    /// conversion a échoué). Le pool de conversion pouvant livrer les images
+    /// dans le désordre, on l'attend avant d'afficher quoi que ce soit.
+    first_arrived: bool,
     /// Génération pour laquelle le décodeur a atteint la fin du fichier.
     eof_generation: Option<u64>,
 
@@ -72,6 +76,7 @@ impl Playback {
                 video_started: false,
                 frames: VecDeque::new(),
                 last_shown: f64::NEG_INFINITY,
+                first_arrived: false,
                 eof_generation: None,
                 samples: VecDeque::new(),
                 samples_pts: 0.0,
@@ -131,6 +136,7 @@ impl Playback {
         st.generation = generation;
         st.frames.clear();
         st.last_shown = f64::NEG_INFINITY;
+        st.first_arrived = false;
         st.samples.clear();
         st.eof_generation = None;
         st.audio_started = false;
@@ -164,12 +170,16 @@ impl Playback {
     }
 
     /// Renvoie l'image à afficher maintenant (la plus récente dont l'heure
-    /// est passée), ou la première disponible si `immediate`.
+    /// est passée), ou, si `immediate`, la première image de la génération
+    /// dès qu'elle est arrivée.
     pub fn take_frame(&self, immediate: bool) -> Option<VideoFrame> {
         let mut st = self.lock();
         let generation = st.generation;
         st.frames.retain(|f| f.generation == generation);
         let frame = if immediate {
+            if !st.first_arrived {
+                return None;
+            }
             st.frames.pop_front()
         } else {
             let now = st.now();
@@ -252,6 +262,7 @@ impl Playback {
         if frame.generation != st.generation || frame.pts <= st.last_shown {
             return; // périmée, ou arrivée après une image plus récente
         }
+        st.first_arrived |= frame.first;
         let index = st.frames.partition_point(|f| f.pts < frame.pts);
         st.frames.insert(index, frame);
     }
@@ -265,6 +276,14 @@ impl Playback {
             st.samples_pts = pts;
         }
         st.samples.extend(samples);
+    }
+
+    /// La conversion de la première image a échoué : on n'attend plus.
+    pub fn first_frame_lost(&self, generation: u64) {
+        let mut st = self.lock();
+        if generation == st.generation {
+            st.first_arrived = true;
+        }
     }
 
     pub fn mark_end_of_stream(&self, generation: u64) {
