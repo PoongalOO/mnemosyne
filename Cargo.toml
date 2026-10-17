@@ -1,0 +1,15 @@
+[package]
+name = "mnemosyne"
+version = "0.1.0"
+edition = "2024"
+description = "Lecteur vidéo minimaliste (H.264 / H.265) basé sur FFmpeg et egui"
+
+[dependencies]
+anyhow = "1"
+cpal = "0.18"
+eframe = "0.37"
+ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-scaling", "software-resampling"] }
+rfd = "0.17"
+
+[profile.release]
+lto = "thin"
