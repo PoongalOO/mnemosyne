@@ -6,7 +6,8 @@
 //! dans la fenêtre. Raccourcis : Espace = lecture/pause, ←/→ = ∓5 s,
 //! ,/. = image précédente/suivante, ↑/↓ = volume, M = couper le son,
 //! I/O = début/fin de sélection, Suppr = supprimer la sélection,
-//! Ctrl+Z = annuler.
+//! Ctrl+Z = annuler, F ou double-clic = plein écran, Échap = quitter le
+//! plein écran.
 
 mod audio;
 mod decoder;
@@ -14,17 +15,21 @@ mod edit;
 mod export;
 mod hwaccel;
 mod playback;
+mod theme;
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use decoder::Decoder;
 use eframe::egui;
 use edit::Editor;
+use theme::{ACCENT, icon};
 
 const EXTENSIONS: &[&str] = &["mp4", "m4v", "webm", "avi", "mkv"];
 const SEEK_STEP: f64 = 5.0;
 const VOLUME_STEP: f32 = 0.05;
+/// En plein écran, délai d'inactivité avant de masquer les contrôles.
+const HIDE_CONTROLS_AFTER: Duration = Duration::from_millis(2500);
 
 fn main() -> eframe::Result {
     let mut initial = None;
@@ -49,6 +54,7 @@ fn main() -> eframe::Result {
         "Mnemosyne",
         options,
         Box::new(move |cc| {
+            theme::install(&cc.egui_ctx);
             let mut app = App { hardware, preview_cuts: true, ..Default::default() };
             if let Some(path) = initial {
                 app.open(&cc.egui_ctx, path);
@@ -242,6 +248,12 @@ struct App {
     export: ExportState,
     /// Fichier à ouvrir après la fenêtre d'enregistrement.
     pending_open: Option<PathBuf>,
+    /// Barre d'outils de montage affichée.
+    show_montage: bool,
+    /// Dernier mouvement de souris ou appui de touche (plein écran).
+    last_activity: Option<Instant>,
+    /// Souris au-dessus des contrôles flottants du plein écran.
+    controls_hovered: bool,
 }
 
 /// Fenêtre d'enregistrement de la vidéo montée.
@@ -390,9 +402,11 @@ impl App {
         }
         if pressed(egui::Key::I) {
             player.editor.mark_in = Some(player.position());
+            self.show_montage = true;
         }
         if pressed(egui::Key::O) {
             player.editor.mark_out = Some(player.position());
+            self.show_montage = true;
         }
         if pressed(egui::Key::Delete) || pressed(egui::Key::Backspace) {
             player.editor.cut_selection(duration);
@@ -400,63 +414,113 @@ impl App {
         if command && pressed(egui::Key::Z) {
             player.editor.undo();
         }
+        if pressed(egui::Key::F) {
+            toggle_fullscreen(ctx);
+        }
+        if pressed(egui::Key::Escape) && is_fullscreen(ctx) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+        }
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui) {
+    /// Contrôles de lecture : frise pleine largeur, boutons, montage et
+    /// informations. `overlay` : version flottante du plein écran.
+    fn controls(&mut self, ui: &mut egui::Ui, overlay: bool) {
         let ctx = ui.ctx().clone();
-        let mut toggle = false;
+        let Some(player) = &mut self.player else { return };
+        let (mut toggle, mut open) = (false, false);
+        let duration = player.duration();
+        let position = player.position();
+
         ui.add_space(4.0);
+        if duration > 0.0
+            && let Some(target) = timeline(ui, duration, position, &player.editor)
+        {
+            player.seek(target);
+        }
+
         ui.horizontal(|ui| {
-            if ui.button("Ouvrir…").clicked() {
-                self.open_dialog(&ctx);
+            if theme::icon_button(ui, icon::FOLDER_OPEN, "Ouvrir une vidéo").clicked() {
+                open = true;
             }
-
-            let Some(player) = &mut self.player else {
-                ui.label("Aucune vidéo — ouvrez un fichier ou glissez-le dans la fenêtre.");
-                return;
-            };
-
+            ui.separator();
             let playing = !player.paused() && !player.finished();
-            if ui.button(if playing { "⏸ Pause" } else { "▶ Lecture" }).clicked() {
+            let (play_icon, play_tip) =
+                if playing { (icon::PAUSE, "Pause (Espace)") } else { (icon::PLAY, "Lecture (Espace)") };
+            if theme::accent_button(ui, play_icon, 20.0, egui::vec2(44.0, 30.0)).on_hover_text(play_tip).clicked() {
                 toggle = true;
             }
-            if ui.button("⏹ Stop").clicked() {
+            if theme::icon_button(ui, icon::STOP, "Stop").clicked() {
                 player.stop();
             }
+            ui.add_space(4.0);
+            // Chiffres à chasse fixe : l'affichage ne bouge pas pendant la lecture.
+            ui.label(egui::RichText::new(format_time_precise(position)).monospace().strong());
+            ui.label(egui::RichText::new(format!("/ {}", format_time_precise(duration))).monospace().weak());
 
-            let duration = player.duration();
-            let position = player.position();
-            ui.label(format!("{} / {}", format_time_precise(position), format_time_precise(duration)));
-
-            // Volume, aligné à droite ; la barre de progression prend le reste.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if player.decoder.has_audio() {
-                    let (mut volume, muted) = player.decoder.playback.volume();
-                    ui.spacing_mut().slider_width = 80.0;
-                    if ui.add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(false)).changed() {
-                        player.decoder.playback.set_volume(volume, false);
-                    }
-                    let icon = if muted || volume == 0.0 { "🔇" } else { "🔊" };
-                    if ui.button(icon).on_hover_text("Couper / rétablir le son (M)").clicked() {
-                        player.toggle_mute();
-                    }
-                    ui.separator();
+                let fullscreen = is_fullscreen(&ctx);
+                let (fs_icon, fs_tip) = if fullscreen {
+                    (icon::CORNERS_IN, "Quitter le plein écran (F, Échap)")
+                } else {
+                    (icon::CORNERS_OUT, "Plein écran (F, double-clic)")
+                };
+                if theme::icon_button(ui, fs_icon, fs_tip).clicked() {
+                    toggle_fullscreen(&ctx);
                 }
                 if duration > 0.0
-                    && let Some(target) = timeline(ui, duration, position, &player.editor)
+                    && ui
+                        .add(
+                            egui::Button::new(format!("{}  Montage", icon::SCISSORS))
+                                .selected(self.show_montage)
+                                .min_size(egui::vec2(0.0, 30.0)),
+                        )
+                        .on_hover_text("Afficher / masquer les outils de montage")
+                        .clicked()
                 {
-                    player.seek(target);
+                    self.show_montage = !self.show_montage;
+                }
+                if player.decoder.has_audio() {
+                    ui.separator();
+                    let (mut volume, muted) = player.decoder.playback.volume();
+                    ui.spacing_mut().slider_width = 90.0;
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut volume, 0.0..=1.0)
+                                .show_value(false)
+                                .handle_shape(egui::style::HandleShape::Circle),
+                        ).changed() {
+                        player.decoder.playback.set_volume(volume, false);
+                    }
+                    let speaker = if muted || volume == 0.0 {
+                        icon::SPEAKER_X
+                    } else if volume < 0.5 {
+                        icon::SPEAKER_LOW
+                    } else {
+                        icon::SPEAKER_HIGH
+                    };
+                    if theme::icon_button(ui, speaker, "Couper / rétablir le son (M)").clicked() {
+                        player.toggle_mute();
+                    }
                 }
             });
         });
         if toggle {
             self.toggle_pause();
         }
+        if open {
+            self.open_dialog(&ctx);
+        }
 
-        self.montage_controls(ui);
+        if self.show_montage {
+            ui.add_space(2.0);
+            ui.separator();
+            self.montage_controls(ui);
+        }
 
         let mut reopen = false;
-        if let Some(player) = &self.player {
+        if let Some(player) = &self.player
+            && !overlay
+        {
             let info = &player.decoder.info;
             ui.horizontal(|ui| {
                 let mut text = format!(
@@ -473,11 +537,11 @@ impl App {
                 // Case à cocher à droite, informations tronquées dans l'espace restant.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     reopen = ui
-                        .checkbox(&mut self.hardware, "Accélération matérielle")
+                        .checkbox(&mut self.hardware, egui::RichText::new("Accélération matérielle").small())
                         .on_hover_text("Décodage par le GPU (VA-API, NVDEC, VDPAU…)")
                         .changed();
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        ui.add(egui::Label::new(egui::RichText::new(text).weak()).truncate());
+                        ui.add(egui::Label::new(egui::RichText::new(text).small().weak()).truncate());
                     });
                 });
             });
@@ -490,6 +554,59 @@ impl App {
             ui.colored_label(ui.visuals().warn_fg_color, error);
         }
         ui.add_space(4.0);
+    }
+
+    /// Écran d'accueil, sans vidéo ouverte.
+    fn welcome(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let area = ui.max_rect();
+        let zone = egui::Rect::from_center_size(
+            area.center(),
+            egui::vec2((area.width() - 48.0).clamp(200.0, 560.0), (area.height() - 48.0).clamp(200.0, 340.0)),
+        );
+        let hovering = files_hovered(&ctx);
+        let color = if hovering { ACCENT } else { ui.visuals().widgets.noninteractive.bg_stroke.color };
+        if hovering {
+            ui.painter().rect_filled(zone, 16.0, ACCENT.gamma_multiply(0.08));
+        }
+        dashed_rect(ui.painter(), zone, color);
+
+        let mut open = false;
+        ui.scope_builder(
+            egui::UiBuilder::new().max_rect(zone.shrink(16.0)).layout(egui::Layout::top_down(egui::Align::Center)),
+            |ui| {
+                let content = if self.error.is_some() { 270.0 } else { 240.0 };
+                ui.add_space(((ui.available_height() - content) / 2.0).max(0.0));
+                ui.label(egui::RichText::new(icon::FILM_STRIP).size(56.0).color(ACCENT));
+                ui.label(egui::RichText::new("Mnemosyne").size(28.0).strong());
+                ui.weak("Lecture et montage de vidéos H.264 / H.265");
+                ui.add_space(14.0);
+                if theme::accent_button(
+                    ui,
+                    format!("{}   Ouvrir une vidéo…", icon::FOLDER_OPEN),
+                    16.0,
+                    egui::vec2(230.0, 40.0),
+                )
+                .clicked()
+                {
+                    open = true;
+                }
+                ui.add_space(6.0);
+                if hovering {
+                    ui.label(egui::RichText::new(format!("{}  Déposez le fichier pour l'ouvrir", icon::UPLOAD)).color(ACCENT));
+                } else {
+                    ui.weak("ou glissez un fichier dans cette fenêtre");
+                }
+                ui.label(egui::RichText::new("MP4  ·  MKV  ·  WebM  ·  AVI").small().weak());
+                if let Some(error) = &self.error {
+                    ui.add_space(10.0);
+                    ui.colored_label(ui.visuals().error_fg_color, error);
+                }
+            },
+        );
+        if open {
+            self.open_dialog(&ctx);
+        }
     }
 }
 
@@ -506,16 +623,15 @@ impl App {
         let mut open_export = false;
 
         ui.horizontal_wrapped(|ui| {
-            ui.strong("Montage");
-            if ui.button("Début [I]").on_hover_text("Début de la sélection à la position actuelle (touche I)").clicked() {
+            if ui.button(format!("{}  Début [I]", icon::ARROW_LINE_RIGHT)).on_hover_text("Début de la sélection à la position actuelle (touche I)").clicked() {
                 editor.mark_in = Some(position);
             }
-            if ui.button("Fin [O]").on_hover_text("Fin de la sélection à la position actuelle (touche O)").clicked() {
+            if ui.button(format!("{}  Fin [O]", icon::ARROW_LINE_LEFT)).on_hover_text("Fin de la sélection à la position actuelle (touche O)").clicked() {
                 editor.mark_out = Some(position);
             }
             let selection = editor.selection();
             if ui
-                .add_enabled(selection.is_some(), egui::Button::new("Supprimer la sélection"))
+                .add_enabled(selection.is_some(), egui::Button::new(format!("{}  Supprimer la sélection", icon::TRASH)))
                 .on_hover_text("Supprime le passage entre le début et la fin de la sélection (touche Suppr)")
                 .clicked()
             {
@@ -529,11 +645,11 @@ impl App {
                 editor.cut_after(position, duration);
             }
             ui.separator();
-            if ui.add_enabled(editor.can_undo(), egui::Button::new("Annuler")).on_hover_text("Ctrl+Z").clicked() {
+            if ui.add_enabled(editor.can_undo(), egui::Button::new(format!("{}  Annuler", icon::ARROW_U_UP_LEFT))).on_hover_text("Ctrl+Z").clicked() {
                 editor.undo();
             }
             if ui
-                .add_enabled(!editor.cuts().is_empty() || selection.is_some(), egui::Button::new("Tout rétablir"))
+                .add_enabled(!editor.cuts().is_empty() || selection.is_some(), egui::Button::new(format!("{}  Tout rétablir", icon::ARROWS_CLOCKWISE)))
                 .on_hover_text("Rétablit toute la vidéo et efface la sélection")
                 .clicked()
             {
@@ -549,8 +665,12 @@ impl App {
                 egui::Label::new(format!("Durée finale : {}", format_time_precise(kept)))
                     .wrap_mode(egui::TextWrapMode::Extend),
             );
+            let save = egui::Button::new(
+                egui::RichText::new(format!("{}  Enregistrer…", icon::FLOPPY_DISK)).color(egui::Color32::WHITE),
+            )
+            .fill(ACCENT);
             if ui
-                .add_enabled(kept > 0.0, egui::Button::new("Enregistrer…"))
+                .add_enabled(kept > 0.0, save)
                 .on_hover_text("Enregistre la vidéo montée dans un nouveau fichier")
                 .clicked()
             {
@@ -767,37 +887,124 @@ impl eframe::App for App {
             self.export_window(&ctx);
         }
 
-        egui::Panel::bottom("controles").show(ui, |ui| self.controls(ui));
+        // Plein écran : contrôles masqués après un moment sans activité.
+        let fullscreen = is_fullscreen(&ctx);
+        let active = ctx.input(|i| {
+            i.pointer.delta() != egui::Vec2::ZERO
+                || i.pointer.any_pressed()
+                || i.events.iter().any(|e| matches!(e, egui::Event::Key { .. }))
+        });
+        let now = Instant::now();
+        if active || self.last_activity.is_none() {
+            self.last_activity = Some(now);
+        }
+        let idle = self.last_activity.map_or(Duration::ZERO, |t| now - t);
+        let paused = self.player.as_ref().is_none_or(|p| p.paused());
+        let show_controls =
+            !fullscreen || paused || modal_open || self.controls_hovered || idle < HIDE_CONTROLS_AFTER;
+        if fullscreen && !show_controls {
+            ctx.set_cursor_icon(egui::CursorIcon::None);
+        } else if fullscreen && !paused {
+            ctx.request_repaint_after(HIDE_CONTROLS_AFTER.saturating_sub(idle));
+        }
 
+        if self.player.is_some() && !fullscreen {
+            egui::Panel::bottom("controles")
+                .frame(egui::Frame::side_top_panel(&ctx.global_style()).inner_margin(egui::Margin::symmetric(12, 4)))
+                .show(ui, |ui| self.controls(ui, false));
+        }
+
+        let background =
+            if self.player.is_some() { egui::Color32::BLACK } else { ctx.global_style().visuals.extreme_bg_color };
+        let mut double_clicked = false;
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
+            .frame(egui::Frame::NONE.fill(background))
             .show(ui, |ui| {
+                if self.player.is_none() {
+                    self.welcome(ui);
+                    return;
+                }
                 let area = ui.max_rect();
-                let Some((texture, aspect)) = self
+                double_clicked = ui.interact(area, egui::Id::unique("video"), egui::Sense::click()).double_clicked();
+                if let Some((texture, aspect)) = self
                     .player
                     .as_ref()
                     .and_then(|p| Some((p.texture.as_ref()?, p.decoder.info.display_aspect)))
-                else {
-                    return;
-                };
-                // Image centrée, proportions conservées.
-                let mut size = egui::vec2(area.width(), area.width() / aspect);
-                if size.y > area.height() {
-                    size = egui::vec2(area.height() * aspect, area.height());
+                {
+                    // Image centrée, proportions conservées.
+                    let mut size = egui::vec2(area.width(), area.width() / aspect);
+                    if size.y > area.height() {
+                        size = egui::vec2(area.height() * aspect, area.height());
+                    }
+                    let rect = egui::Rect::from_center_size(area.center(), size);
+                    // Les images sont converties directement à la taille affichée.
+                    if let Some(player) = &self.player {
+                        let ppp = ctx.pixels_per_point();
+                        player.decoder.playback.set_target_size((
+                            (size.x * ppp).round() as u32,
+                            (size.y * ppp).round() as u32,
+                        ));
+                    }
+                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                    ui.painter().image(texture.id(), rect, uv, egui::Color32::WHITE);
                 }
-                let rect = egui::Rect::from_center_size(area.center(), size);
-                // Les images sont converties directement à la taille affichée.
-                if let Some(player) = &self.player {
-                    let ppp = ctx.pixels_per_point();
-                    player.decoder.playback.set_target_size((
-                        (size.x * ppp).round() as u32,
-                        (size.y * ppp).round() as u32,
-                    ));
+                if files_hovered(&ctx) {
+                    let painter = ui.painter();
+                    painter.rect_filled(area, 0.0, egui::Color32::from_black_alpha(170));
+                    dashed_rect(painter, area.shrink(24.0), ACCENT);
+                    painter.text(
+                        area.center(),
+                        egui::Align2::CENTER_CENTER,
+                        format!("{}  Déposez la vidéo pour l'ouvrir", icon::UPLOAD),
+                        egui::FontId::proportional(22.0),
+                        egui::Color32::WHITE,
+                    );
                 }
-                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                ui.painter().image(texture.id(), rect, uv, egui::Color32::WHITE);
             });
+        if double_clicked {
+            toggle_fullscreen(&ctx);
+        }
+
+        // Contrôles flottants en bas de l'écran.
+        self.controls_hovered = false;
+        if fullscreen && show_controls && self.player.is_some() {
+            let width = (ctx.content_rect().width() - 48.0).min(1200.0);
+            let response = egui::Area::new(egui::Id::unique("controles_plein_ecran"))
+                .order(egui::Order::Foreground)
+                .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -24.0])
+                .show(&ctx, |ui| {
+                    egui::Frame::window(ui.style())
+                        .fill(ui.visuals().panel_fill.gamma_multiply(0.92))
+                        .inner_margin(egui::Margin::symmetric(16, 8))
+                        .show(ui, |ui| {
+                            ui.set_width(width - 32.0);
+                            self.controls(ui, true);
+                        });
+                })
+                .response;
+            self.controls_hovered = response.contains_pointer();
+        }
     }
+}
+
+fn is_fullscreen(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.viewport().fullscreen.unwrap_or(false))
+}
+
+fn toggle_fullscreen(ctx: &egui::Context) {
+    let fullscreen = is_fullscreen(ctx);
+    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+}
+
+/// Un fichier est en train d'être glissé au-dessus de la fenêtre.
+fn files_hovered(ctx: &egui::Context) -> bool {
+    ctx.input(|i| !i.raw.hovered_files.is_empty())
+}
+
+/// Cadre en pointillés (zone de dépôt).
+fn dashed_rect(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let corners = [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()];
+    painter.extend(egui::Shape::dashed_line(&corners, egui::Stroke::new(1.5, color), 8.0, 6.0));
 }
 
 /// Frise de lecture : passages supprimés (rouge), sélection (jaune) et
@@ -805,37 +1012,44 @@ impl eframe::App for App {
 fn timeline(ui: &mut egui::Ui, duration: f64, position: f64, editor: &Editor) -> Option<f64> {
     let size = egui::vec2(ui.available_width().max(40.0), 22.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
-    let painter = ui.painter_at(rect);
-    let visuals = ui.visuals();
+    // Un peu de marge : la tête de lecture déborde aux extrémités.
+    let painter = ui.painter_at(rect.expand2(egui::vec2(8.0, 0.0)));
     let x = |t: f64| rect.left() + ((t / duration).clamp(0.0, 1.0) as f32) * rect.width();
-    let bar = rect.shrink2(egui::vec2(0.0, 6.0));
+    // La barre s'épaissit au survol.
+    let active = response.hovered() || response.dragged();
+    let half = if active { 4.0 } else { 2.5 };
+    let bar = egui::Rect::from_x_y_ranges(rect.x_range(), rect.center().y - half..=rect.center().y + half);
 
-    painter.rect_filled(bar, 3.0, visuals.extreme_bg_color);
+    painter.rect_filled(bar, half, egui::Color32::from_rgb(0x33, 0x38, 0x42));
     let played = egui::Rect::from_min_max(bar.min, egui::pos2(x(position), bar.max.y));
-    painter.rect_filled(played, 3.0, visuals.selection.bg_fill.gamma_multiply(0.6));
+    painter.rect_filled(played, half, ACCENT);
 
-    let removed_color = egui::Color32::from_rgb(200, 60, 60);
     for &(a, b) in editor.cuts().removed() {
         let r = egui::Rect::from_x_y_ranges(x(a)..=x(b).max(x(a) + 1.0), bar.y_range());
-        painter.rect_filled(r, 0.0, removed_color.gamma_multiply(0.9));
+        painter.rect_filled(r, 0.0, theme::REMOVED);
     }
 
-    let mark_color = visuals.warn_fg_color;
     if let Some((a, b)) = editor.selection() {
         let r = egui::Rect::from_x_y_ranges(x(a)..=x(b), rect.y_range());
-        painter.rect_filled(r, 0.0, mark_color.gamma_multiply(0.25));
+        painter.rect_filled(r, 2.0, theme::SELECTION.gamma_multiply(0.25));
     }
     for mark in [editor.mark_in, editor.mark_out].into_iter().flatten() {
         let mx = x(mark);
-        painter.line_segment([egui::pos2(mx, rect.top()), egui::pos2(mx, rect.bottom())], (2.0, mark_color));
+        painter.line_segment([egui::pos2(mx, rect.top()), egui::pos2(mx, rect.bottom())], (2.0, theme::SELECTION));
     }
 
-    let px = x(position);
-    let head = visuals.strong_text_color();
-    painter.line_segment([egui::pos2(px, rect.top() + 2.0), egui::pos2(px, rect.bottom() - 2.0)], (2.0, head));
-    painter.circle_filled(egui::pos2(px, rect.center().y), 4.0, head);
-
     let to_time = |p: egui::Pos2| ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64 * duration;
+    if let Some(p) = response.hover_pos() {
+        let hx = p.x.clamp(rect.left(), rect.right());
+        painter.line_segment(
+            [egui::pos2(hx, rect.top() + 3.0), egui::pos2(hx, rect.bottom() - 3.0)],
+            (1.0, egui::Color32::from_white_alpha(90)),
+        );
+    }
+
+    let head = egui::pos2(x(position), rect.center().y);
+    painter.circle(head, if active { 7.0 } else { 5.5 }, egui::Color32::WHITE, (2.0, ACCENT));
+
     let target = if response.clicked() || response.dragged() {
         response.interact_pointer_pos().map(to_time)
     } else {

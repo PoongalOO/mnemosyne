@@ -12,7 +12,9 @@ décodage, **egui/eframe** pour l'interface et **cpal** pour le son.
   D3D11VA/DXVA2 sous Windows ; VideoToolbox sous macOS. Repli automatique sur
   le décodage logiciel si le GPU ne gère pas le flux (ex. H.264 10 bits)
 - Lecture / pause, stop, barre de progression avec déplacement précis, volume,
-  image par image, glisser-déposer, raccourcis clavier
+  image par image, plein écran, glisser-déposer, raccourcis clavier
+- Interface sombre avec icônes vectorielles (Phosphor), écran d'accueil et
+  contrôles flottants masqués automatiquement en plein écran
 - Montage : couper le début, la fin ou un passage entre deux points, puis
   enregistrer le résultat dans un **nouveau fichier** (l'original n'est jamais
   modifié)
@@ -36,8 +38,8 @@ cargo run --release -- chemin/vers/video.mkv
 cargo run --release -- --no-hw chemin/vers/video.mkv   # décodage logiciel
 ```
 
-Sans argument, utilisez le bouton **Ouvrir** ou glissez un fichier dans la
-fenêtre. La case **Accélération matérielle** bascule le mode de décodage en
+Sans argument, l'écran d'accueil propose le bouton **Ouvrir une vidéo…** ; on
+peut aussi glisser un fichier dans la fenêtre. La case **Accélération matérielle** bascule le mode de décodage en
 cours de lecture ; la ligne d'information indique le mode réellement utilisé.
 
 | Touche  | Action                          |
@@ -50,10 +52,17 @@ cours de lecture ; la ligne d'information indique le mode réellement utilisé.
 | I / O   | Début / fin de la sélection     |
 | Suppr   | Supprimer la sélection          |
 | Ctrl+Z  | Annuler la dernière coupe       |
+| F / double-clic | Plein écran             |
+| Échap   | Quitter le plein écran          |
+
+En plein écran, les contrôles flottent au bas de l'image et disparaissent
+(avec le pointeur) après 2,5 s sans mouvement de souris pendant la lecture ;
+ils restent affichés en pause.
 
 ## Montage
 
-La barre **Montage** agit à la position de lecture :
+Le bouton **✂ Montage** affiche ou masque la barre d'outils de montage (elle
+s'ouvre aussi avec les touches I / O). Elle agit à la position de lecture :
 
 - **Couper avant** / **Couper après** : supprime tout ce qui précède / suit ;
 - **Début [I]** / **Fin [O]** puis **Supprimer la sélection** : supprime le
@@ -104,8 +113,11 @@ le WebM n'admettant pas H.264/H.265).
 - `src/export.rs` : enregistrement de la vidéo montée dans un thread
   (progression, annulation) ; réencodage ou copie avec calage sur les images
   clés (y compris GOP ouverts HEVC).
-- `src/main.rs` : interface egui (lecteur, frise de montage, fenêtre
-  d'enregistrement).
+- `src/main.rs` : interface egui (écran d'accueil, lecteur, frise de montage,
+  plein écran, fenêtre d'enregistrement).
+- `src/theme.rs` : thème sombre, couleurs et icônes. La police d'icônes
+  [Phosphor](https://phosphoricons.com/) (`assets/Phosphor.ttf`, licence MIT,
+  voir `assets/LICENSE-Phosphor.txt`) est intégrée à l'exécutable.
 
 Le projet utilise l'édition Rust 2024 et suit la version stable courante de
 Rust (installée avec [rustup](https://rustup.rs) : `rustup update stable`).
