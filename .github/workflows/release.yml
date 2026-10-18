@@ -17,7 +17,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: version
         name: Version de Cargo.toml
         run: |
@@ -49,7 +49,7 @@ jobs:
           apt-get install -y --no-install-recommends ca-certificates curl git build-essential \
             pkg-config clang libclang-dev libasound2-dev \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -61,7 +61,7 @@ jobs:
         run: |
           cargo deb --deb-revision "1~${{ matrix.distro }}" --output target/debian/
           dpkg-deb --info target/debian/*.deb
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: deb-${{ matrix.distro }}
           path: target/debian/*.deb
@@ -72,7 +72,7 @@ jobs:
     env:
       FFMPEG_DIR: ${{ github.workspace }}\ffmpeg
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: FFmpeg (build partagé GPL de BtbN)
@@ -95,7 +95,7 @@ jobs:
           Copy-Item ffmpeg\LICENSE.txt "$dir\LICENSE-FFmpeg.txt"
           Get-ChildItem $dir
           Compress-Archive $dir "$dir.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: mnemosyne-*-windows-x64.zip
@@ -104,7 +104,7 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
       - run: nix build -L
       - run: nix flake check
@@ -114,11 +114,11 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
