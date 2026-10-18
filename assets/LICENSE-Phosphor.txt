@@ -1,5 +1,7 @@
-Phosphor.ttf — Phosphor Icons (https://phosphoricons.com/), variante Regular.
-Source : https://github.com/phosphor-icons/web
+Phosphor.ttf — Phosphor Icons (https://phosphoricons.com/), variante Regular,
+réduite aux seuls points de code des icônes (U+E000–U+F8FF) avec fontTools :
+  pyftsubset Phosphor.ttf --unicodes=U+E000-F8FF --layout-features= --no-hinting
+Source : https://github.com/phosphor-icons/web (via la crate egui-phosphor 0.14)
 
 MIT License
 

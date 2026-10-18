@@ -287,7 +287,7 @@ struct AudioTrack {
 }
 
 /// Convertisseur vers RGBA, recréé si le format des images change.
-struct Scaler {
+pub(crate) struct Scaler {
     context: scaling::Context,
     /// Format et taille source, taille de sortie.
     key: (Pixel, u32, u32, u32, u32),
@@ -304,7 +304,7 @@ struct Job {
 }
 
 /// Rééchantillonneur vers le format de la carte son.
-struct Resampler {
+pub(crate) struct Resampler {
     context: resampling::Context,
     key: (Sample, u32, u16),
 }
@@ -541,7 +541,7 @@ fn convert_worker(
 /// Convertit une image décodée (YUV…) en image RGBA egui, réduite à la
 /// taille d'affichage `target` si celle-ci est plus petite (inutile de
 /// convertir puis transférer une image 4K affichée dans une petite fenêtre).
-fn convert(scaler: &mut Option<Scaler>, src: &frame::Video, target: (u32, u32)) -> Result<egui::ColorImage> {
+pub(crate) fn convert(scaler: &mut Option<Scaler>, src: &frame::Video, target: (u32, u32)) -> Result<egui::ColorImage> {
     let (src_w, src_h) = (src.width(), src.height());
     let fit = |native: u32, wanted: u32| {
         // Arrondi à 16 px pour ne pas recréer le contexte à chaque pixel de
@@ -608,7 +608,7 @@ fn configure_colorspace(context: &mut scaling::Context, src: &frame::Video) {
 
 /// Convertit une trame audio en échantillons `f32` entrelacés au format de
 /// la carte son (fréquence et nombre de canaux).
-fn resample(
+pub(crate) fn resample(
     resampler: &mut Option<Resampler>,
     src: &frame::Audio,
     out_rate: u32,

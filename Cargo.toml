@@ -2,14 +2,17 @@
 name = "mnemosyne"
 version = "0.1.0"
 edition = "2024"
+authors = ["PoongalOO <sam@poongaloo.org>"]
+license = "GPL-3.0-or-later"
 description = "Lecteur vidéo minimaliste (H.264 / H.265) basé sur FFmpeg et egui"
 
 [dependencies]
 anyhow = "1"
 cpal = "0.18"
-eframe = "0.37"
+eframe = { version = "0.37", features = ["persistence"] }
 ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-scaling", "software-resampling"] }
 rfd = "0.17"
+serde = { version = "1", features = ["derive"] }
 
 [profile.release]
 lto = "thin"

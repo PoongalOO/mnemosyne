@@ -8,13 +8,21 @@ décodage, **egui/eframe** pour l'interface et **cpal** pour le son.
   reconnus par FFmpeg sont lus aussi, avec un avertissement)
 - Son : toute piste audio lisible par FFmpeg (AAC, Opus, MP3, AC-3…), avec
   synchronisation audio/vidéo
-- Décodage matériel : VA-API (Intel/AMD), NVDEC/CUDA (NVIDIA), VDPAU sous Linux ;
+- Décodage matériel : VA-API (Intel/AMD), NVDEC/CUDA (NVIDIA), VDPAU (pilote
+  NVIDIA propriétaire uniquement) sous Linux ;
   D3D11VA/DXVA2 sous Windows ; VideoToolbox sous macOS. Repli automatique sur
   le décodage logiciel si le GPU ne gère pas le flux (ex. H.264 10 bits)
 - Lecture / pause, stop, barre de progression avec déplacement précis, volume,
   image par image, plein écran, glisser-déposer, raccourcis clavier
-- Interface sombre avec icônes vectorielles (Phosphor), écran d'accueil et
-  contrôles flottants masqués automatiquement en plein écran
+- Interface en thème sombre, clair ou celui du système, police Inter et
+  icônes vectorielles (Phosphor) ; écran d'accueil avec les fichiers récents ;
+  contrôles flottants masqués automatiquement en plein écran ; messages en
+  surimpression (volume, déplacement, coupes…)
+- Frise avec graduations, zoom à la molette, miniature au survol, repères des
+  images clés et forme d'onde du son (outils de montage affichés)
+- Réglages mémorisés d'une session à l'autre : volume, thème, accélération
+  matérielle, outils affichés, mode d'enregistrement, taille et position de
+  la fenêtre
 - Montage : couper le début, la fin ou un passage entre deux points, puis
   enregistrer le résultat dans un **nouveau fichier** (l'original n'est jamais
   modifié)
@@ -38,22 +46,34 @@ cargo run --release -- chemin/vers/video.mkv
 cargo run --release -- --no-hw chemin/vers/video.mkv   # décodage logiciel
 ```
 
-Sans argument, l'écran d'accueil propose le bouton **Ouvrir une vidéo…** ; on
-peut aussi glisser un fichier dans la fenêtre. La case **Accélération matérielle** bascule le mode de décodage en
-cours de lecture ; la ligne d'information indique le mode réellement utilisé.
+Sans argument, l'écran d'accueil propose le bouton **Ouvrir une vidéo…** et
+les derniers fichiers ouverts ; on peut aussi glisser un fichier dans la
+fenêtre. Le menu **⚙ Réglages** contient l'accélération matérielle (bascule
+en cours de lecture), le thème et l'aide ; le bouton **ⓘ** affiche les
+caractéristiques de la vidéo, dont le mode de décodage réellement utilisé,
+et le bouton **@** présente l'application, sa licence et son auteur.
+`--no-hw` désactive le décodage matériel pour la session sans modifier le
+réglage mémorisé.
 
-| Touche  | Action                          |
-|---------|---------------------------------|
-| Espace  | Lecture / pause                 |
-| ← / →   | Reculer / avancer de 5 s        |
-| , / .   | Image précédente / suivante     |
-| ↑ / ↓   | Volume                          |
-| M       | Couper / rétablir le son        |
-| I / O   | Début / fin de la sélection     |
-| Suppr   | Supprimer la sélection          |
-| Ctrl+Z  | Annuler la dernière coupe       |
-| F / double-clic | Plein écran             |
-| Échap   | Quitter le plein écran          |
+| Touche / geste              | Action                                   |
+|-----------------------------|------------------------------------------|
+| Espace, clic sur l'image    | Lecture / pause                          |
+| ← / →                       | Reculer / avancer de 5 s                 |
+| , / .                       | Image précédente / suivante              |
+| ↑ / ↓                       | Volume                                   |
+| M                           | Couper / rétablir le son                 |
+| F, double-clic sur l'image  | Plein écran                              |
+| Échap                       | Quitter le plein écran                   |
+| I / O                       | Début / fin de la sélection              |
+| Maj+I / Maj+O               | Aller au début / à la fin de la sélection|
+| Suppr                       | Supprimer la sélection                   |
+| Ctrl+Z                      | Annuler la dernière coupe                |
+| Ctrl+O                      | Ouvrir une vidéo                         |
+| F1, ?                       | Aide (liste des raccourcis)              |
+| Molette sur la frise        | Zoom (défilement horizontal : déplacer)  |
+| Maj + glisser sur la frise  | Créer une sélection                      |
+| Glisser un repère jaune     | Déplacer le début / la fin               |
+| Clic droit sur la frise     | Repères, rétablir un passage…            |
 
 En plein écran, les contrôles flottent au bas de l'image et disparaissent
 (avec le pointeur) après 2,5 s sans mouvement de souris pendant la lecture ;
@@ -70,13 +90,22 @@ s'ouvre aussi avec les touches I / O). Elle agit à la position de lecture :
 - **Annuler** / **Tout rétablir**.
 
 Les passages supprimés apparaissent en rouge sur la frise, la sélection en
-jaune. Avec **Aperçu** coché, la lecture saute les passages supprimés pour
-vérifier le résultat.
+jaune (ses repères se déplacent à la souris) ; une légende le rappelle. Le
+clic droit sur un passage supprimé permet de le rétablir. Avec **Aperçu**
+coché, la lecture saute les passages supprimés pour vérifier le résultat.
+
+Le bouton **Passages** ouvre un panneau listant les passages conservés et
+supprimés (aller au début, supprimer, rétablir) et permet de couper ou de
+sélectionner un passage en saisissant ses temps (`83.4`, `1:23.4`,
+`1:02:03`).
 
 **Enregistrer…** propose un nom à côté de l'original (`<nom>_montage.<ext>`,
 numéroté s'il existe déjà) et refuse le fichier d'origine comme destination.
 L'écriture se fait dans un fichier `.part` renommé à la fin : une erreur ou
-une annulation ne laisse aucun fichier partiel. Deux modes :
+une annulation ne laisse aucun fichier partiel. La fenêtre affiche le temps
+restant estimé, signale la fin dans la barre des tâches si elle n'est pas au
+premier plan et propose d'ouvrir la vidéo obtenue ou son dossier. Deux modes
+(le dernier choisi est mémorisé) :
 
 - **Précis (réencodage)** : coupes à l'image près. La vidéo est réencodée dans
   son codec d'origine (libx264 CRF 18 / libx265 CRF 20, preset *fast*), le son
@@ -113,11 +142,22 @@ le WebM n'admettant pas H.264/H.265).
 - `src/export.rs` : enregistrement de la vidéo montée dans un thread
   (progression, annulation) ; réencodage ou copie avec calage sur les images
   clés (y compris GOP ouverts HEVC).
-- `src/main.rs` : interface egui (écran d'accueil, lecteur, frise de montage,
-  plein écran, fenêtre d'enregistrement).
-- `src/theme.rs` : thème sombre, couleurs et icônes. La police d'icônes
-  [Phosphor](https://phosphoricons.com/) (`assets/Phosphor.ttf`, licence MIT,
-  voir `assets/LICENSE-Phosphor.txt`) est intégrée à l'exécutable.
+- `src/main.rs` : interface egui (écran d'accueil, lecteur, barre d'outils,
+  panneau des passages, plein écran, fenêtres d'enregistrement et d'aide).
+- `src/timeline.rs` : frise (zoom, graduations, images clés, forme d'onde,
+  repères déplaçables, menu contextuel).
+- `src/thumbnails.rs` : miniatures de survol, produites par un second
+  décodeur logiciel dans son propre thread (seule la dernière demande compte).
+- `src/waveform.rs` : forme d'onde (crête par tranche de 20 ms), calculée en
+  arrière-plan.
+- `src/settings.rs` : réglages mémorisés (persistance d'eframe, dans
+  `~/.local/share/mnemosyne/` sous Linux).
+- `src/theme.rs` : thèmes sombre et clair, couleurs, icônes, icône de la
+  fenêtre (dessinée par le programme). Les polices sont intégrées à
+  l'exécutable : [Inter](https://rsms.me/inter/) (`assets/Inter-Regular.ttf`,
+  licence SIL OFL 1.1) et les icônes [Phosphor](https://phosphoricons.com/)
+  (`assets/Phosphor.ttf`, licence MIT, réduite aux points de code des
+  icônes ; voir `assets/LICENSE-*.txt`).
 
 Le projet utilise l'édition Rust 2024 et suit la version stable courante de
 Rust (installée avec [rustup](https://rustup.rs) : `rustup update stable`).
@@ -137,3 +177,10 @@ Rust (installée avec [rustup](https://rustup.rs) : `rustup update stable`).
 - Mode rapide avec des GOP ouverts (HEVC encodé par x265) : les quelques
   images précédant l'image clé de fin d'un passage (≈ 0,1 s) sont omises,
   car elles dépendent d'images retirées.
+
+## Licence
+
+Mnémosyne est un logiciel libre distribué sous licence GNU GPL, version 3
+ou ultérieure (voir `LICENSE`), sans aucune garantie.
+
+Auteur : PoongalOO <sam@poongaloo.org>

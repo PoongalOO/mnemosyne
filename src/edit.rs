@@ -32,6 +32,26 @@ impl Cuts {
         self.removed.insert(index, (start, end));
     }
 
+    /// Rétablit le passage `[a, b]` : il est retiré des passages supprimés
+    /// (qui peuvent être raccourcis ou scindés en deux).
+    pub fn restore(&mut self, a: f64, b: f64) {
+        let (a, b) = (a.min(b), a.max(b));
+        let mut removed = Vec::with_capacity(self.removed.len() + 1);
+        for &(s, e) in &self.removed {
+            if e <= a || s >= b {
+                removed.push((s, e));
+                continue;
+            }
+            if a - s >= MIN_LENGTH {
+                removed.push((s, a));
+            }
+            if e - b >= MIN_LENGTH {
+                removed.push((b, e));
+            }
+        }
+        self.removed = removed;
+    }
+
     pub fn removed(&self) -> &[(f64, f64)] {
         &self.removed
     }
@@ -92,6 +112,20 @@ impl Editor {
     fn apply(&mut self, a: f64, b: f64, duration: f64) {
         let before = self.cuts.clone();
         self.cuts.remove(a, b, duration);
+        if self.cuts != before {
+            self.history.push(before);
+        }
+    }
+
+    /// Supprime le passage `[a, b]`.
+    pub fn cut_range(&mut self, a: f64, b: f64, duration: f64) {
+        self.apply(a, b, duration);
+    }
+
+    /// Rétablit le passage `[a, b]` s'il était supprimé.
+    pub fn restore(&mut self, a: f64, b: f64) {
+        let before = self.cuts.clone();
+        self.cuts.restore(a, b);
         if self.cuts != before {
             self.history.push(before);
         }
@@ -180,6 +214,25 @@ mod tests {
         let mut cuts = Cuts::default();
         cuts.remove(0.0, D, D);
         assert!(cuts.kept(D).is_empty());
+    }
+
+    #[test]
+    fn retablir_un_passage() {
+        let mut cuts = Cuts::default();
+        cuts.remove(10.0, 50.0, D);
+        cuts.remove(70.0, 80.0, D);
+        cuts.restore(20.0, 30.0); // scinde le premier passage
+        assert_eq!(cuts.removed(), &[(10.0, 20.0), (30.0, 50.0), (70.0, 80.0)]);
+        cuts.restore(70.0, 80.0); // passage entier
+        cuts.restore(0.0, 15.0); // raccourcit le début
+        assert_eq!(cuts.removed(), &[(15.0, 20.0), (30.0, 50.0)]);
+
+        let mut editor = Editor::default();
+        editor.cut_range(40.0, 60.0, D);
+        editor.restore(40.0, 60.0);
+        assert!(editor.cuts().is_empty());
+        editor.undo();
+        assert_eq!(editor.cuts().removed(), &[(40.0, 60.0)]);
     }
 
     #[test]

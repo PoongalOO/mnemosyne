@@ -40,11 +40,14 @@ pub fn setup(context: &mut codec::context::Context) -> Option<HwConfig> {
     unsafe {
         let ctx = context.as_mut_ptr();
         let codec = ffi::avcodec_find_decoder((*ctx).codec_id);
-        if codec.is_null() {
+        if codec.is_null() || !supported_profile(ctx) {
             return None;
         }
         for &device_type in CANDIDATES {
             let Some(pix_fmt) = hw_pix_fmt(codec, device_type) else { continue };
+            if !usable(device_type) {
+                continue;
+            }
 
             let mut device: *mut ffi::AVBufferRef = ptr::null_mut();
             if ffi::av_hwdevice_ctx_create(&mut device, device_type, ptr::null(), ptr::null_mut(), 0)
@@ -68,6 +71,28 @@ pub fn setup(context: &mut codec::context::Context) -> Option<HwConfig> {
     }
 }
 
+/// Profils qu'aucune API matérielle ne décode : inutile de tenter, FFmpeg
+/// échouerait à chaque initialisation du décodeur (ouverture, déplacement)
+/// et le repli logiciel se ferait sans multi-thread.
+unsafe fn supported_profile(ctx: *const ffi::AVCodecContext) -> bool {
+    // H.264 Baseline complet (FMO/ASO) : seul le Constrained Baseline,
+    // dont le profil porte un drapeau en plus, est accéléré.
+    const H264_BASELINE: i32 = 66;
+    unsafe { !((*ctx).codec_id == ffi::AVCodecID::AV_CODEC_ID_H264 && (*ctx).profile == H264_BASELINE) }
+}
+
+/// VDPAU n'est natif qu'avec le pilote NVIDIA propriétaire. Ailleurs, il
+/// passe par une couche de compatibilité (libvdpau-va-gl) dont
+/// l'initialisation peut bloquer indéfiniment quand VA-API est indisponible.
+fn usable(device_type: ffi::AVHWDeviceType) -> bool {
+    #[cfg(target_os = "linux")]
+    if device_type == AV_HWDEVICE_TYPE_VDPAU {
+        return std::path::Path::new("/proc/driver/nvidia/version").exists();
+    }
+    let _ = device_type;
+    true
+}
+
 /// Format de pixel produit par `codec` avec ce type de périphérique.
 unsafe fn hw_pix_fmt(codec: *const ffi::AVCodec, device_type: ffi::AVHWDeviceType) -> Option<i32> {
     let method = ffi::AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX as i32;
@@ -81,19 +106,26 @@ unsafe fn hw_pix_fmt(codec: *const ffi::AVCodec, device_type: ffi::AVHWDeviceTyp
 }
 
 /// Choisit le format matériel s'il est proposé, sinon laisse FFmpeg choisir
-/// un format logiciel (repli).
+/// un format logiciel (repli). FFmpeg rappelle cette fonction sans le format
+/// matériel quand son initialisation a échoué : on y renonce alors pour de
+/// bon, sans quoi l'échec (et son message d'erreur) se répéterait à chaque
+/// réinitialisation du décodeur, par exemple après un déplacement.
 unsafe extern "C" fn get_format(
     ctx: *mut ffi::AVCodecContext,
     formats: *const ffi::AVPixelFormat,
 ) -> ffi::AVPixelFormat {
     unsafe {
         let wanted = (*ctx).opaque as isize as i32;
-        let mut p = formats;
-        while *p != ffi::AVPixelFormat::AV_PIX_FMT_NONE {
-            if *p as i32 == wanted {
-                return *p;
+        let none = ffi::AVPixelFormat::AV_PIX_FMT_NONE;
+        if wanted != none as i32 {
+            let mut p = formats;
+            while *p != none {
+                if *p as i32 == wanted {
+                    return *p;
+                }
+                p = p.add(1);
             }
-            p = p.add(1);
+            (*ctx).opaque = none as i32 as isize as *mut c_void;
         }
         ffi::avcodec_default_get_format(ctx, formats)
     }
