@@ -738,7 +738,7 @@ impl AudioTranscoder {
     fn resample(&mut self, src: &frame::Audio) -> Result<(frame::Audio, usize)> {
         if self.resampler.is_none() {
             let mut layout = src.channel_layout();
-            if layout.0.order == ffi::AVChannelOrder::AV_CHANNEL_ORDER_UNSPEC {
+            if layout.is_empty() {
                 layout = ChannelLayout::default(i32::from(src.channels()));
             }
             self.resampler = Some(resampling::Context::get(

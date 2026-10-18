@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 authors = ["PoongalOO <sam@poongaloo.org>"]
 license = "GPL-3.0-or-later"
+repository = "https://github.com/PoongalOO/mnemosyne"
+readme = "README.md"
 description = "Lecteur vidéo minimaliste (H.264 / H.265) basé sur FFmpeg et egui"
 
 [dependencies]
@@ -13,6 +15,29 @@ eframe = { version = "0.37", features = ["persistence"] }
 ffmpeg-next = { version = "9", default-features = false, features = ["codec", "format", "software-scaling", "software-resampling"] }
 rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
+
+# Paquet Debian / Ubuntu (cargo deb). Les dépendances (version de FFmpeg de
+# la distribution) sont déduites du binaire.
+[package.metadata.deb]
+name = "mnemosyne"
+maintainer = "PoongalOO <sam@poongaloo.org>"
+copyright = "PoongalOO <sam@poongaloo.org>"
+license-file = ["LICENSE", "0"]
+section = "video"
+priority = "optional"
+depends = "$auto"
+recommends = "va-driver-all"
+extended-description = """\
+Lecteur vidéo minimaliste pour le H.264 et le H.265, basé sur FFmpeg, avec \
+décodage matériel (VA-API) et montage simple : suppression de passages et \
+enregistrement de la vidéo montée, en mode rapide ou précis."""
+assets = [
+    ["target/release/mnemosyne", "usr/bin/", "755"],
+    ["packaging/mnemosyne.desktop", "usr/share/applications/", "644"],
+    ["packaging/mnemosyne.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["packaging/mnemosyne.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+    ["README.md", "usr/share/doc/mnemosyne/", "644"],
+]
 
 [profile.release]
 lto = "thin"

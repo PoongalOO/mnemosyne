@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Mnémosyne
+GenericName=Lecteur vidéo
+Comment=Lecteur vidéo minimaliste avec montage simple
+Exec=mnemosyne %f
+Icon=mnemosyne
+Terminal=false
+Categories=AudioVideo;Video;Player;
+Keywords=vidéo;lecteur;montage;h264;h265;hevc;
+MimeType=video/mp4;video/x-matroska;video/quicktime;video/webm;video/mp2t;video/x-msvideo;video/x-m4v;

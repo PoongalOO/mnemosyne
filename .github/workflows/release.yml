@@ -1,0 +1,132 @@
+# Paquets publiés à chaque tag « vX.Y.Z » : .deb (Debian 13, Ubuntu 24.04),
+# archive Windows et vérification du flake Nix. Lancé à la main (onglet
+# Actions), le workflow produit les paquets sans créer de release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: Version de Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Le tag $GITHUB_REF_NAME ne correspond pas à la version $version de Cargo.toml"
+            exit 1
+          fi
+
+  deb:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:trixie
+            distro: debian13
+          - image: ubuntu:24.04
+            distro: ubuntu24.04
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    steps:
+      - name: Dépendances système
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential \
+            pkg-config clang libclang-dev libasound2-dev \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.distro }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
+      - name: Paquet
+        run: |
+          cargo deb --deb-revision "1~${{ matrix.distro }}" --output target/debian/
+          dpkg-deb --info target/debian/*.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-${{ matrix.distro }}
+          path: target/debian/*.deb
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      FFMPEG_DIR: ${{ github.workspace }}\ffmpeg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: FFmpeg (build partagé GPL de BtbN)
+        shell: pwsh
+        run: |
+          $name = "ffmpeg-n8.1-latest-win64-gpl-shared-8.1"
+          Invoke-WebRequest "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$name.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath .
+          Rename-Item $name ffmpeg
+      - run: cargo build --release
+      - name: Archive
+        shell: pwsh
+        run: |
+          $dir = "mnemosyne-${{ needs.version.outputs.version }}-windows-x64"
+          New-Item -ItemType Directory $dir | Out-Null
+          Copy-Item target\release\mnemosyne.exe, LICENSE, README.md $dir
+          foreach ($lib in "avcodec", "avformat", "avutil", "swscale", "swresample") {
+            Copy-Item "ffmpeg\bin\$lib-*.dll" $dir
+          }
+          Copy-Item ffmpeg\LICENSE.txt "$dir\LICENSE-FFmpeg.txt"
+          Get-ChildItem $dir
+          Compress-Archive $dir "$dir.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: mnemosyne-*-windows-x64.zip
+
+  nix:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build -L
+      - run: nix flake check
+
+  release:
+    needs: [version, deb, windows, nix]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            - **Debian 13 / Ubuntu 24.04** : télécharger le `.deb` correspondant, puis
+              `sudo apt install ./mnemosyne_*.deb`
+            - **Windows** : décompresser l'archive `.zip` et lancer `mnemosyne.exe`
+              (Windows peut afficher un avertissement SmartScreen : le programme n'est pas signé)
+            - **NixOS** : `nix run github:PoongalOO/mnemosyne/${{ github.ref_name }}`

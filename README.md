@@ -27,6 +27,22 @@ décodage, **egui/eframe** pour l'interface et **cpal** pour le son.
   enregistrer le résultat dans un **nouveau fichier** (l'original n'est jamais
   modifié)
 
+## Installation
+
+Les paquets sont publiés sur la page
+[Releases](https://github.com/PoongalOO/mnemosyne/releases) :
+
+- **Debian 13 / Ubuntu 24.04** : `sudo apt install ./mnemosyne_*.deb` (le
+  paquet installe aussi l'entrée du menu des applications et l'icône) ;
+- **Windows** : décompresser l'archive `.zip` et lancer `mnemosyne.exe` (le
+  programme n'est pas signé : Windows SmartScreen peut afficher un
+  avertissement au premier lancement) ;
+- **NixOS** : `nix run github:PoongalOO/mnemosyne`, ou en ajoutant le flake
+  à la configuration (`inputs.mnemosyne.url = "github:PoongalOO/mnemosyne";`
+  puis `mnemosyne.packages.${system}.default` ou `overlays.default`).
+
+Pour compiler soi-même, voir ci-dessous.
+
 ## Dépendances système (Debian / Ubuntu)
 
 ```sh
@@ -163,6 +179,29 @@ Le projet utilise l'édition Rust 2024 et suit la version stable courante de
 Rust (installée avec [rustup](https://rustup.rs) : `rustup update stable`).
 `ffmpeg-next` détecte à la compilation la version de FFmpeg installée
 (compatible avec FFmpeg 3.4 et suivants).
+
+## Intégration continue et paquets
+
+- `.github/workflows/ci.yml` : clippy (sans avertissement) et tests à chaque
+  envoi sur `main` et à chaque pull request.
+- `.github/workflows/release.yml` : à chaque tag `vX.Y.Z` (qui doit
+  correspondre à la version de `Cargo.toml`), fabrication des paquets puis
+  publication d'une release GitHub :
+  - `.deb` pour Debian 13 et Ubuntu 24.04 avec
+    [cargo-deb](https://github.com/kornelski/cargo-deb), compilés dans un
+    conteneur de chaque distribution (chacune a sa version de FFmpeg) ;
+  - archive Windows : exécutable et DLL FFmpeg (build GPL de
+    [BtbN](https://github.com/BtbN/FFmpeg-Builds)) ;
+  - vérification du flake Nix (`flake.nix`, `nix/package.nix`).
+
+  Lancé à la main depuis l'onglet *Actions*, il fabrique les paquets sans
+  publier de release.
+
+Pour publier une version : changer `version` dans `Cargo.toml`, commiter,
+puis `git tag v0.2.0 && git push origin v0.2.0`.
+
+Fichiers de paquet communs : `packaging/mnemosyne.desktop` et l'icône
+(`packaging/mnemosyne.svg`, `.png`).
 
 ## Limites
 

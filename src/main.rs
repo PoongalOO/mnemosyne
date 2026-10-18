@@ -6,6 +6,9 @@
 //! « Ouvrir », fichiers récents) ou le glisser dans la fenêtre. Les
 //! raccourcis clavier sont listés dans [`SHORTCUTS`] (touche F1).
 
+// Pas de console à côté de la fenêtre sous Windows.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod audio;
 mod decoder;
 mod edit;

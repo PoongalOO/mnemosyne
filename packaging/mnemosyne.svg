@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Même dessin que theme::app_icon (icône de la fenêtre). -->
+  <rect x="5.12" y="5.12" width="117.76" height="117.76" rx="28.16" fill="#4f8cff"/>
+  <path d="M48.64 35.84 L48.64 92.16 L94.72 64 Z" fill="#ffffff"/>
+</svg>

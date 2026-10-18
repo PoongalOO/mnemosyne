@@ -617,7 +617,7 @@ pub(crate) fn resample(
     let key = (src.format(), src.rate(), src.channels());
     if resampler.as_ref().map(|r| r.key) != Some(key) {
         let mut layout = src.channel_layout();
-        if layout.0.order == ffi::AVChannelOrder::AV_CHANNEL_ORDER_UNSPEC {
+        if layout.is_empty() {
             layout = ChannelLayout::default(i32::from(src.channels()));
         }
         let context = resampling::Context::get(
